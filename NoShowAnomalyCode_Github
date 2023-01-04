@@ -1,0 +1,616 @@
+#Cell 1
+
+#Dave's STV election code, modified to give more outputs (specifically losers)
+
+#This code works for No-show anomalies.
+
+import random
+import pandas as pd
+import math
+import operator
+import numpy as np
+import copy
+
+
+def truncate(number, digits) -> float: #truncates according to Scotland rules
+    stepper = 10.0 ** digits
+    return math.trunc(stepper * number) / stepper
+
+def STV3(frame3,n,S): #program to run STV election
+    frame2 = frame3.copy(deep=True)
+    """Inputs election, n=number of candidates, S=number of seats.  Returns winners, losers=eliminated, 
+      dictionary of pre-elimination data, dictionary of winners at each step of elimination"""
+    #Quota is floor of number of ballots divided by (S+1), plus 1
+    winners=[]
+    hopefuls=[]
+    eliminatedCand=[]
+    elimFrames={}
+    tempWinners={}
+    quota=math.floor(sum(frame2['Count'])/(S+1))+1
+    
+    list1=[]
+    for k in range(len(frame2)):
+        if frame2.at[k,'ballot']!='':
+            if frame2.at[k,'ballot'][0] in list1:
+                pass
+            else:
+                list1.append(frame2.at[k,'ballot'][0])
+    cand_dict={}
+    for i in range(n):
+        cand_dict[i]=list1[i]
+        hopefuls.append(list1[i]) #create initial list of hopefuls
+ 
+    #Get each candidate's initial number of votes this round
+    vote_counts={}
+    
+    for k in range(len(frame2)):
+            if frame2.at[k,'ballot']!='':
+                if frame2.at[k,'ballot'][0] in vote_counts.keys():
+                    vote_counts[frame2.at[k,'ballot'][0]]+=frame2.iloc[k]['Count']
+                else:
+                    vote_counts[frame2.at[k,'ballot'][0]]=frame2.iloc[k]['Count']
+    
+    max_count=max(vote_counts.values())
+    while len(winners)<S:
+        
+        max_count=max(vote_counts.values())
+        #somebody is elected and we have to transfer their votes
+        if max_count>=quota:
+            #There might be multiple people elected this round; save them as a sorted dictionary
+            votes_for_winners={k:vote_counts[k] for k in vote_counts.keys() if vote_counts[k]>=quota }
+            votes_for_winners=dict(sorted(votes_for_winners.items(),key=lambda x: x[1], reverse=True))
+            
+            #If we try to elect too many people, need to drop someone who surpassed quota
+            if len(winners)+len(votes_for_winners)>S:
+                
+                for k in range(len(winners)+len(votes_for_winners)-S):
+                    winners.append(list(votes_for_winners.keys())[k])
+            
+            else:
+                winners=winners+list(votes_for_winners.keys())
+                for cand in winners:
+                    if cand in hopefuls:
+                        hopefuls.remove(cand) #remove winner from hopefuls list
+                
+                while len(votes_for_winners)>0:
+                    
+                    cand=list(votes_for_winners.keys())[0]
+    
+                    if cand not in winners:
+                        winners.append(cand)
+                        hopefuls.remove(cand)
+                    if len(winners)==S:
+                        return winners, eliminatedCand, elimFrames, tempWinners
+                    #print("cand elected", cand)
+                    
+                    weight=truncate((vote_counts[cand]-quota)/vote_counts[cand],5) #calculate weight for transfer
+                    for k in range(len(frame2)): 
+                        if frame2.at[k,'ballot']!='':
+                            if frame2.at[k,'ballot'][0]==cand: #make fractional votes
+                                frame2.at[k,'Count']=frame2.at[k,'Count']*weight
+                                for x in winners:
+                                    if x in frame2.at[k,'ballot']: #remove winner from ballots
+                                        frame2.at[k,'ballot']=frame2.at[k,'ballot'].replace(x,'')
+                            else: #remove winner from ballot
+                                if cand in frame2.at[k,'ballot']:
+                                     frame2.at[k,'ballot']=frame2.at[k,'ballot'].replace(cand,'')
+                    votes_for_winners.pop(cand)
+                    vote_counts={}
+                    
+                    for k in range(len(frame2)): #calculate new vote counts
+                        if frame2.at[k,'ballot']!='':
+                            if frame2.at[k,'ballot'][0] in vote_counts.keys():
+                                vote_counts[frame2.at[k,'ballot'][0]]+=frame2.iloc[k]['Count']
+                            else:
+                                vote_counts[frame2.at[k,'ballot'][0]]=frame2.iloc[k]['Count']
+
+                    votes_for_winners={k:vote_counts[k] for k in vote_counts.keys() if vote_counts[k]>=quota }
+                    votes_for_winners=dict(sorted(votes_for_winners.items(),key=lambda x: x[1], reverse=True))
+                    for cand in votes_for_winners.keys():
+                        if cand not in winners:
+                            winners.append(cand)
+                            hopefuls.remove(cand)
+                    if len(winners)==S:
+                        return winners, eliminatedCand, elimFrames, tempWinners
+                    frame2=pd.DataFrame(frame2.groupby(['ballot'],as_index=False)['Count'].sum())
+        #nobody is elected by surpassing quota, but the number
+        #of candidates left equals S
+        elif len(hopefuls)+len(winners)==S:
+            return winners+hopefuls, eliminatedCand, elimFrames, tempWinners
+        
+        #remove weakest cand and transfer their votes with weight one
+        else:
+            min_count=min(i for i in vote_counts.values() if i>0)
+            count=0
+            for votes in vote_counts:
+                if votes==min_count:
+                    count+=1
+            if count>1: #this basically never happens, but it is here just in case
+                print("tie in candidate to remove")
+                return
+
+            eliminated_cand = list(vote_counts.keys())[list(vote_counts.values()).index(min_count)] 
+            
+            elimFrames[len(eliminatedCand)]=frame2.copy(deep=True) #save pref sched data at this level
+            tempWinners[len(eliminatedCand)]=copy.deepcopy(winners) #save winners at this level
+            eliminatedCand.append(eliminated_cand)
+            hopefuls.remove(eliminated_cand)
+            
+            for k in range(len(frame2)): #remove eliminated candidate from ballots
+                if eliminated_cand in frame2.iloc[k]['ballot']:
+                    frame2.at[k,'ballot']=frame2.at[k,'ballot'].replace(eliminated_cand,'')
+            for k in range(len(frame2)):
+                if frame2.at[k,'ballot']=='':
+                    frame2.drop(k)
+            vote_counts={} 
+            for k in range(len(frame2)): #calculate new vote counts
+                if frame2.at[k,'ballot']!='':
+                    if frame2.at[k,'ballot'][0] in vote_counts.keys():
+                        vote_counts[frame2.at[k,'ballot'][0]]+=frame2.iloc[k]['Count']
+                    else:
+                        vote_counts[frame2.at[k,'ballot'][0]]=frame2.iloc[k]['Count']
+                        
+            max_count=max(vote_counts.values())
+            if len(hopefuls)+len(winners)==S:
+                return winners+hopefuls, eliminatedCand, elimFrames, tempWinners
+            frame2=pd.DataFrame(frame2.groupby(['ballot'],as_index=False)['Count'].sum())
+    return winners, eliminatedCand, elimFrames, tempWinners
+
+
+#Cell 2
+
+#Dave's STV election code, modified to run after some candidates have been eliminated/elected.  
+# Basically the same as STV3, but it only returns the winner of the (modified) election 
+import random
+import pandas as pd
+import math
+import operator
+import numpy as np
+
+
+def truncate(number, digits) -> float:
+    stepper = 10.0 ** digits
+    return math.trunc(stepper * number) / stepper
+
+def STV_temp(frame3,n,S,winners, temp_quota): #this is to be used to run a test election once 
+    # some people have been elected
+    frame2 = frame3.copy(deep=True)
+    """Inputs election, n=number of candidates, S=number of seats.  Returns winners"""
+    
+    hopefuls=[]
+    eliminatedCand=[]
+    quota = temp_quota
+    list1=[]
+    for k in range(len(frame2)):
+        if frame2.at[k,'ballot']!='':
+            if frame2.at[k,'ballot'][0] in list1:
+                pass
+            else:
+                list1.append(frame2.at[k,'ballot'][0])
+    cand_dict={}
+    for i in range(n):
+        cand_dict[i]=list1[i]
+        hopefuls.append(list1[i])
+        
+    #Get each candidate's initial number of votes this round
+    vote_counts={}
+    
+    for k in range(len(frame2)):
+            if frame2.at[k,'ballot']!='':
+                if frame2.at[k,'ballot'][0] in vote_counts.keys():
+                    vote_counts[frame2.at[k,'ballot'][0]]+=frame2.iloc[k]['Count']
+                else:
+                    vote_counts[frame2.at[k,'ballot'][0]]=frame2.iloc[k]['Count']
+    
+    max_count=max(vote_counts.values())
+    while len(winners)<S:
+        
+        max_count=max(vote_counts.values())
+        #somebody is elected and we have to transfer their votes
+        if max_count>=quota:
+            #There might be multiple people elected this round; save them as a sorted dictionary
+            votes_for_winners={k:vote_counts[k] for k in vote_counts.keys() if vote_counts[k]>=quota }
+            votes_for_winners=dict(sorted(votes_for_winners.items(),key=lambda x: x[1], reverse=True))
+            
+            #If we try to elect too many people, need to drop someone who surpassed quota
+            if len(winners)+len(votes_for_winners)>S:
+                
+                for k in range(len(winners)+len(votes_for_winners)-S):
+                    winners.append(list(votes_for_winners.keys())[k])
+            
+            else:
+                winners=winners+list(votes_for_winners.keys())
+                #print(winners)
+                for cand in winners:
+                    if cand in hopefuls:
+                        hopefuls.remove(cand)
+                
+                while len(votes_for_winners)>0:
+                    
+                    cand=list(votes_for_winners.keys())[0]
+    
+                    if cand not in winners:
+                        winners.append(cand)
+                        hopefuls.remove(cand)
+                    if len(winners)==S:
+                        return winners
+                    #print("cand elected", cand)
+                    
+                    weight=truncate((vote_counts[cand]-quota)/vote_counts[cand],5)
+                    
+                    #print("weight",weight)
+                    for k in range(len(frame2)):
+                        if frame2.at[k,'ballot']!='':
+                            if frame2.at[k,'ballot'][0]==cand:
+                                
+                                frame2.at[k,'Count']=frame2.at[k,'Count']*weight
+                                for x in winners:
+                                    if x in frame2.at[k,'ballot']:
+                                        frame2.at[k,'ballot']=frame2.at[k,'ballot'].replace(x,'')
+                            else:
+                                if cand in frame2.at[k,'ballot']:
+                                     frame2.at[k,'ballot']=frame2.at[k,'ballot'].replace(cand,'')
+                    votes_for_winners.pop(cand)
+                    vote_counts={}
+                    
+                    for k in range(len(frame2)):
+                        if frame2.at[k,'ballot']!='':
+                            if frame2.at[k,'ballot'][0] in vote_counts.keys():
+                                vote_counts[frame2.at[k,'ballot'][0]]+=frame2.iloc[k]['Count']
+                            else:
+                                vote_counts[frame2.at[k,'ballot'][0]]=frame2.iloc[k]['Count']
+
+                    votes_for_winners={k:vote_counts[k] for k in vote_counts.keys() if vote_counts[k]>=quota }
+                    votes_for_winners=dict(sorted(votes_for_winners.items(),key=lambda x: x[1], reverse=True))
+                    #print(vote_counts)
+                    for cand in votes_for_winners.keys():
+                        if cand not in winners:
+                            winners.append(cand)
+                            hopefuls.remove(cand)
+                    if len(winners)==S:
+                        return winners
+                    frame2=pd.DataFrame(frame2.groupby(['ballot'],as_index=False)['Count'].sum())
+        #nobody is elected by surpassing quota, but the number
+        #of candidates left equals S
+        elif len(hopefuls)+len(winners)==S:
+            return winners+hopefuls
+        
+        #remove weakest cand and transfer their votes with weight one
+        else:
+            print(vote_counts)
+            min_count=min(i for i in vote_counts.values() if i>0)
+            count=0
+            for votes in vote_counts:
+                if votes==min_count:
+                    count+=1
+            if count>1:
+                print("tie in candidate to remove")
+                return
+
+            eliminated_cand = list(vote_counts.keys())[list(vote_counts.values()).index(min_count)] #took str() away
+            
+            #print(frame2)
+            eliminatedCand.append(eliminated_cand)
+            hopefuls.remove(eliminated_cand)
+            
+            for k in range(len(frame2)):
+                if eliminated_cand in frame2.iloc[k]['ballot']:
+                    frame2.at[k,'ballot']=frame2.at[k,'ballot'].replace(eliminated_cand,'')
+            for k in range(len(frame2)):
+                if frame2.at[k,'ballot']=='':
+                    frame2.drop(k)
+            vote_counts={}
+           
+            for k in range(len(frame2)):
+                if frame2.at[k,'ballot']!='':
+                    if frame2.at[k,'ballot'][0] in vote_counts.keys():
+                        vote_counts[frame2.at[k,'ballot'][0]]+=frame2.iloc[k]['Count']
+                    else:
+                        vote_counts[frame2.at[k,'ballot'][0]]=frame2.iloc[k]['Count']
+                        
+            max_count=max(vote_counts.values())
+            if len(hopefuls)+len(winners)==S:
+                return winners+hopefuls
+            frame2=pd.DataFrame(frame2.groupby(['ballot'],as_index=False)['Count'].sum())
+    return winners
+
+
+
+
+#Cell 3: 
+
+#Note: this code looks for no-show anomalies caused by changes in the dropout order, specifically removing
+# some votes of the form X...H...W... that makes H a winner and W a loser (and only affects those two?)
+
+#“There is a group of n voters who all prefer L_i to W_j (perhaps to differing levels, further explanation
+# below**).  When that group of n voters show up to vote, W_j wins a seat and L_i does not.  If that group
+# of voters does NOT show up to vote, L_i gets a seat and W_j does not (and we would have to assume here
+# that all other winners in the election stay as winners).  Thus that group of voters would be better off
+# NOT showing up to vote, because more of their favored candidates** would win if they do not show up than
+# win if they DO show up.  “
+
+#Process: identify winners, hopefuls, a loser. Choose a hopeful C_k at a given level with next dropout D.  
+# For every other hopeful H_m and winner W_j, try to find enough votes of the form C_k...H_m...(W_j) to 
+# remove from the election so that C_k drops out before D.  Rerun election to see if H_m is now a winner 
+# if not, no anomaly.  If so, check to see if W_j is NOT a winner anymore.  Report conditional anomaly, 
+# along with names of H_m, W_j, old list of winners and new list to see if other winners stay same
+import copy
+
+
+def noShowAnomSearch(frame, n, S): 
+    """inputs: dataframe of election, n= number of candidates, S= number of seats
+    runs election to find winners/losers/frames, then identifies and eliminates votes to find 
+    No Show anomalies connected to change in dropout order.  
+    outputs if an anomaly exists, and how anomaly happens""" 
+ 
+    quota=math.floor(sum(frame['Count'])/(S+1))+1 #calculate quota   
+    winners, losers, elimFrames, winners_dict=STV3(frame,n,S) #Run original STV election, 
+    print("Original winners are: ")
+    print(winners) 
+   
+    for i in range(len(losers)): #function removes i losers from original data frame, 
+        # then searches for all possible anomalies at a given level<=n, right before each "loser" is 
+        # eliminated.  outputs if anomaly occurs, and if so, how
+        
+        #now have temporary dataframe with i losers removed, now check for anomaly at (n-i)-cand level
+        tempFrame = elimFrames[i].copy(deep=True)
+        tempWinners = copy.deepcopy(winners_dict[i]) #candidates who have already won a seat at this point
+        loser = losers[i] #loser is the candidate about to be eliminated
+        vote_counts={}
+        
+        for k in range(len(tempFrame)):
+            if tempFrame.at[k,'ballot']!='':
+                if tempFrame.at[k,'ballot'][0] in vote_counts.keys():
+                    vote_counts[tempFrame.at[k,'ballot'][0]]+=tempFrame.iloc[k]['Count']
+                else:
+                    vote_counts[tempFrame.at[k,'ballot'][0]]=tempFrame.iloc[k]['Count']
+        print("")
+        print("Out of " + str(n) + " candidates, results at the " +str(len(vote_counts))+"-candidate level for Elimination Order anomaly:")
+        
+        checkables = list(vote_counts.keys())
+        checkables.remove(loser)#these are the candidates we want to check for anomalies, need to remove winners
+        for j in range(len(winners)):
+            if winners[j] in checkables:
+                checkables.remove(winners[j])
+            else:
+                pass
+        
+        loser_gap = {} #calculate gap between each candidate and the loser
+        for x in range(len(vote_counts)):
+            loser_gap[list(vote_counts.keys())[x]]=vote_counts[list(vote_counts.keys())[x]]-vote_counts[loser]                                                                           
+        
+        #choose one of the other non-winning candidates C_j and compare to the next-eliminated candidate E.  
+        #looking for votes of the form C_j … L_i …, where W_j is NOT present in the … (or, more easily, not present 
+        #in the ballot at all).  If there are enough of such votes that removing them would make H drop out 
+        #before E, remove them.  If there are not enough, remove them and them look 
+        # for the H … L_i … W_j votes.?  If enough of them to surpass E, do it.  If not, 
+        #no No-show anomaly of that particular type would be possible.  The code would loop over all losers L_i,
+        #then all winners W_j, then all remaining Hopefuls H that are not the L_i, W_j, or next-eliminated 
+        #candidate E.
+        
+        for k in range(len(checkables)):
+            gap = loser_gap[checkables[k]] #number of votes separating candidate and loser
+            hopefuls = checkables[:] #copy checkables from before, remove C_k, add loser
+            hopefuls.remove(checkables[k])
+            hopefuls.append(loser)
+            for j in range(len(winners)):
+                for m in range(len(hopefuls)):
+                    tempFrame1 = tempFrame.copy(deep=True)
+                    modifiableVotes1 = 0 #modifiableVotes= sum of all ballots that start with C_k L
+                    modifiableVotes2 = 0
+                    for z in range(len(tempFrame1)): #looking for which votes could be removed
+                        currentBallot = tempFrame1.at[z,'ballot']
+                        try:
+                            currentBallot[0]
+                        except: 
+                            continue
+                        else: 
+                            if currentBallot[0]==checkables[k] and hopefuls[m] in currentBallot and winners[j] not in currentBallot:
+                                modifiableVotes1 += tempFrame1.at[z,'Count'] #ballots without winner on the ballot
+                            if currentBallot[0]==checkables[k] and hopefuls[m] in currentBallot and winners[j] in currentBallot:
+                                if currentBallot.index(hopefuls[m])<currentBallot.index(winners[j]):
+                                    modifiableVotes2 += tempFrame1.at[z,'Count'] #ballots where winner is ranked below
+                    # check if enough votes to change
+                    if (modifiableVotes1 + modifiableVotes2) <= (loser_gap[checkables[k]]+1): 
+                        print("No anomaly for " + hopefuls[m] + " by removing " + checkables[k] + 
+                              ".  Not enough modifiable votes to change dropout order.")
+                    
+                    else: #there are enough modifiable ballots to remove.  Remove them in correct order
+                        remainingWinners = copy.deepcopy(winners)
+                        remainingWinners.remove(winners[j])
+                        for c in range(len(tempWinners)):
+                            if tempWinners[c] in remainingWinners:
+                                remainingWinners.remove(tempWinners[c]) #list of winners who have NOT yet been elected, not winners[j]
+                        check = copy.deepcopy(gap)
+                        
+                        for z in range(len(tempFrame1)): #These steps remove "best" votes to cause No-show anomaly
+                            # because they are first filtered through a winner getting a seat
+                            if check >= 0:
+                                currentBallot = tempFrame1.at[z,'ballot']
+                                try:
+                                    currentBallot[0]
+                                except: 
+                                    continue
+                                else: #if C_k...H_m... with no W_j on ballot
+                                    if currentBallot[0]==checkables[k] and hopefuls[m] in currentBallot and (winners[j] not in currentBallot):
+                                        for y in range(len(remainingWinners)):
+                                            if remainingWinners[y] in currentBallot:
+                                                if currentBallot.index(remainingWinners[y])<currentBallot.index(hopefuls[m]):
+                                                    if check - tempFrame1.at[z,'Count']>=-1: #remove all such ballots
+                                                        check = check - tempFrame1.at[z,'Count'] #update check
+                                                        tempFrame1.at[z,'Count'] = 0
+                                                        print("removed votes 1")
+                                                    else: #remove check+1 such ballots
+                                                        tempFrame1.at[z,'Count'] = tempFrame1.at[z,'Count']-(check+1)
+                                                        check = -1
+                                                        print("removed votes 2")
+                                    #if C_k...H_m...W_j
+                                    elif currentBallot[0]==checkables[k] and hopefuls[m] in currentBallot and winners[j] in currentBallot:
+                                        if currentBallot.index(hopefuls[m])<currentBallot.index(winners[j]):
+                                            for y in range(len(remainingWinners)):
+                                                if remainingWinners[y] in currentBallot:
+                                                    if currentBallot.index(remainingWinners[y])<currentBallot.index(hopefuls[m]):
+                                                        if check - tempFrame1.at[z,'Count']>=-1: #remove all such ballots
+                                                            check = check - tempFrame1.at[z,'Count']
+                                                            tempFrame1.at[z,'Count'] = 0
+                                                            print("removed votes 3")
+                                                        else: #remove check+1 such ballots
+                                                            tempFrame1.at[z,'Count'] = tempFrame1.at[z,'Count']-(check+1)
+                                                            check = -1
+                                                            print("removed votes 4")
+                                    else:
+                                        pass
+                        # once "best" ballots are removed, remove enough others to surpass gap
+                        #modify C_j … L_i …, where W_j is NOT present votes
+                        if modifiableVotes1 > check: #remove only loser gap +1 votes
+                            for z in range(len(tempFrame1)):
+                                if check >= 0:
+                                    currentBallot = tempFrame1.at[z,'ballot']
+                                    try:
+                                        currentBallot[0]
+                                    except: 
+                                        continue
+                                    else:
+                                        if currentBallot[0]==checkables[k] and hopefuls[m] in currentBallot and winners[j] not in currentBallot:
+                                            if check - tempFrame1.at[z,'Count']>=-1: #remove all such ballots
+                                                check = check - tempFrame1.at[z,'Count']
+                                                tempFrame1.at[z,'Count'] = 0
+                                                print("removed votes 5")
+                                            else: #remove check+1 such ballots
+                                                tempFrame1.at[z,'Count'] = tempFrame1.at[z,'Count']-(check+1)
+                                                check = -1
+                                                print("removed votes 6")
+                                        else: 
+                                            pass
+                            # Run STV election on modifed election. If W_j is NOT in winners and H_m is, 
+                            # AND all the other winners stay the same, then report anomaly 
+                           
+                            win1 = STV_temp(tempFrame1, len(vote_counts), S, tempWinners, quota) #n-i
+                            if (hopefuls[m] in win1) and (winners[j] not in win1):# and (set(oldWinners).issubset(set(win1))):
+                                print("NO SHOW ANOMALY for " + hopefuls[m]+". "  + "Remove " + str(gap+1) +" "+ checkables[k]+ 
+                                "..."+ hopefuls[m] + "__ votes where " + winners[j] + " is not in the ballot and " +
+                                hopefuls[m] + " becomes a winner and " + winners[j] + " loses their seat." )
+                                print("Original winners were " + str(winners))
+                                print("New winners are " + str(win1))
+                                print('Modified election is')
+                                
+                            else:
+                                print("No anomaly for " + hopefuls[m] +" after removing "+ str(gap +1) +" "+ checkables[k]+ 
+                                "..."+ hopefuls[m] + "__ votes where " + winners[j] + " is not in the ballot. ")
+                        else: #remove all modifiable1 ballots, then remove gap+1 modifiable2s
+                            for z in range(len(tempFrame1)):
+                                currentBallot = tempFrame1.at[z,'ballot']
+                                try:
+                                    currentBallot[0]
+                                except: 
+                                    continue
+                                else:
+                                    if currentBallot[0]==checkables[k] and hopefuls[m] in currentBallot and winners[j] not in currentBallot:
+                                        gap = gap - tempFrame1.at[z,'Count']
+                                        tempFrame1.at[z,'Count'] = 0 
+                                        print("removed votes 7")
+                            check = copy.deepcopy(gap)
+                            for z in range(len(tempFrame1)):
+                                if check >= 0:
+                                    currentBallot = tempFrame1.at[z,'ballot']       
+                                    try:
+                                        currentBallot[0]
+                                    except: 
+                                        continue
+                                    else:
+                                        if currentBallot[0]==checkables[k] and hopefuls[m] in currentBallot and winners[j] in currentBallot:
+                                            if currentBallot.index(hopefuls[m])<currentBallot.index(winners[j]):
+                                                if check - tempFrame1.at[z,'Count']>=-1: #remove all such ballots
+                                                    check = check - tempFrame1.at[z,'Count']
+                                                    tempFrame1.at[z,'Count'] = 0
+                                                    print("removed votes 8")
+                                                else: #remove check+1 such ballots
+                                                    tempFrame1.at[z,'Count'] = tempFrame1.at[z,'Count']-(check+1)
+                                                    check = -1
+                                                    print("removed votes 9")
+                                        else: 
+                                            pass  
+                            # Run STV election on modifed election. If W_j is NOT in winners and H_m is, 
+                            # AND all the other winners stay the same, then report anomaly 
+                            
+                            win1 = STV_temp(tempFrame1, len(vote_counts), S, tempWinners, quota)
+                            
+                            if (hopefuls[m] in win1) and (winners[j] not in win1):# and (set(oldWinners).issubset(set(win1))):
+                                print("NO SHOW ANOMALY for " + hopefuls[m]+". "  + "Remove all " + checkables[k]+ 
+                                "..."+ hopefuls[m] + "__ votes where " + winners[j] + " is not in the ballot AND " +
+                                str(gap+1)+ " " +checkables[k] + "..." + hopefuls[m] + "..."+ winners[j] + " votes and " +
+                                hopefuls[m] + " becomes a winner and " + winners[j] + " loses their seat." )
+                                print("Original winners were " + str(winners))
+                                print("New winners are " + str(win1))
+                                print('Modified election is')
+                                
+                            else:
+                                print("No anomaly for " + hopefuls[m] +" after removing all " + checkables[k]+ 
+                                "..."+ hopefuls[m] + " votes where " + winners[j] + " is not in the ballot AND " +
+                                str(gap+1)+ " " +checkables[k] + "..." + hopefuls[m] + "..."+ winners[j] +
+                                " votes. ")
+                     
+                        
+                       
+                           
+                        ###END of this no-show check
+              
+
+#Cell 4: import data and run No-show Anomaly code
+
+File=open('DownwardAnomalyElections/2021_Portland_PrefSched_Top3gone.txt','r') #'TestElections/STVtestElection2_52.txt', 
+lines=File.readlines()
+
+first_space=lines[0].find(' ')
+
+num_cands=int(lines[0][0:first_space])
+num_seats=int(lines[0][first_space+1])
+
+column_names=['ballot','Count'] #arrange data nicely to be processed
+data=pd.DataFrame(columns = column_names)
+for k in range(1,len(lines)):
+    if lines[k][0]=='0':
+        break
+    first_space=lines[k].find(' ')
+    count=int(lines[k][0:first_space])
+    end=lines[k].find(' 0')
+    ballot=lines[k][first_space+1:end+1]
+    if '10 ' in ballot:
+        ballot=ballot.replace('10 ','J ')
+    if '11 ' in ballot:
+        ballot=ballot.replace('11 ','K ')
+    if '12 ' in ballot:
+        ballot=ballot.replace('12 ','L ')
+    if '13 ' in ballot:
+        ballot=ballot.replace('13 ', 'M ')
+    if '14 ' in ballot:
+        ballot=ballot.replace('14 ', 'N ')
+    if '1 ' in ballot:
+        ballot=ballot.replace('1 ','A ')
+    if '2 ' in ballot:
+        ballot=ballot.replace('2 ','B ')
+    if '3 ' in ballot:
+        ballot=ballot.replace('3 ','C ')
+    if '4 ' in ballot:
+        ballot=ballot.replace('4 ','D ')
+    if '5 ' in ballot:
+        ballot=ballot.replace('5 ','E ')
+    if '6 ' in ballot:
+        ballot=ballot.replace('6 ','F ')
+    if '7 ' in ballot:
+        ballot=ballot.replace('7 ','G ')
+    if '8 ' in ballot:
+        ballot=ballot.replace('8 ','H ')
+    if '9 ' in ballot:
+        ballot=ballot.replace('9 ','I ')
+    
+    while ' ' in ballot:
+        ballot=ballot.replace(' ','')
+    
+    row={'Count':[float(count)], 'ballot':[ballot]}
+    df2=pd.DataFrame(row)
+    data=data.append(df2, ignore_index=True)
+
+data_copy=data.copy(deep=True) 
+noShowAnomSearch(data_copy,num_cands,num_seats) #run no-show anomaly search
+
