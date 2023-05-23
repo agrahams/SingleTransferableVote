@@ -14,7 +14,7 @@ Each set of code takes in a preference schedule (usually a txt or csv file) of t
 0
 
 The first line is the number of candidates (in this case, 5) followed by the number of seats to be filled (in this case, 3). Inserting a 1 for the number of seats effectively runs a single-winner instant runoff election.
-The remaining lines are of the form (# of ballots) (ranking) 0, so (for example) there are 37 ballots with the ranking of candidate 2 in first place, 4 in second, and 5 in third place.  Each type of ballot ends with a 0 to tell the code where the line ends.  After all ballots are listed, there is a single line with a 0. Any data included in the file after that 0 is not read.
+The remaining lines are of the form (# of ballots) (ranking) 0, so (for example) there are 37 ballots with the ranking of candidate 2 in first place, 4 in second, and 5 in third place.  Each type of ballot ends with a 0 to tell the code where the line ends.  After all ballots are listed, there is a single line with a 0. Any data included in the file after that 0 is not read.  An example of set of data from the Eilean Siar, Ward 7 election of 2012 is included in these files. 
 
 Each set of code first runs the STV election to see who the winner set is, what the order of elimination of the losing candidates is, and the preference schedule at each point where a candidate is eliminated.
 
